@@ -88,7 +88,7 @@ func TestNodeGetVolumeStats(t *testing.T) {
 	}
 }
 
-func TestNodeGetVolumeStatsRefusesUnhealthyPublishPath(t *testing.T) {
+func TestNodeGetVolumeStatsReportsUnhealthyPublishPathAbnormal(t *testing.T) {
 	ns := newTestNodeServer(t, &fakeMounter{})
 	podPath := kubeletPublishPath(t, "pv-1")
 	vol := NewVolume("vol-1", &fakeMounter{}, ns.Driver)
@@ -102,12 +102,18 @@ func TestNodeGetVolumeStatsRefusesUnhealthyPublishPath(t *testing.T) {
 		return &volumeUsage{}, nil
 	}
 
-	_, err := ns.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{
+	resp, err := ns.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{
 		VolumeId:   "vol-1",
 		VolumePath: podPath,
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Fatalf("expected NotFound for unhealthy publish path, got %v", err)
+	if err != nil {
+		t.Fatalf("expected an abnormal condition for an unhealthy publish path, got %v", err)
+	}
+	if cond := resp.GetVolumeCondition(); cond == nil || !cond.GetAbnormal() || cond.GetMessage() == "" {
+		t.Fatalf("expected an abnormal condition with a message, got %+v", resp.GetVolumeCondition())
+	}
+	if len(resp.GetUsage()) != 0 {
+		t.Fatalf("expected no usage for an unhealthy mount, got %+v", resp.GetUsage())
 	}
 	if readCalled.Load() {
 		t.Fatal("readVolumeUsage must not run after mount validation fails")

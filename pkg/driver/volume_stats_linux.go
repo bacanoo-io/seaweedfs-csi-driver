@@ -42,7 +42,7 @@ func (ns *NodeServer) readVolumeUsageForStats(path string) (*volumeUsage, error)
 		healthyFn = isStagingPathHealthy
 	}
 	if !healthyFn(path) {
-		return nil, status.Errorf(codes.NotFound, "volume path %s is not a live mount", path)
+		return nil, &unhealthyMountError{path: path}
 	}
 	return ns.readVolumeUsage(path)
 }

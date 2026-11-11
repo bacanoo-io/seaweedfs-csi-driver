@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -409,6 +410,13 @@ func (ns *NodeServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetC
 					},
 				},
 			},
+			{
+				Type: &csi.NodeServiceCapability_Rpc{
+					Rpc: &csi.NodeServiceCapability_RPC{
+						Type: csi.NodeServiceCapability_RPC_VOLUME_CONDITION,
+					},
+				},
+			},
 		},
 	}, nil
 }
@@ -442,7 +450,16 @@ func (ns *NodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVo
 	}
 
 	usage, err := ns.readVolumeUsageWithTimeout(statsCtx, volumeID, volumePath)
-	if err != nil {
+	var unhealthy *unhealthyMountError
+	switch {
+	case errors.As(err, &unhealthy):
+		// VOLUME_CONDITION: the volume is staged or published here, but its
+		// FUSE mount does not answer. The health monitor recovers it.
+		return abnormalVolumeStats(fmt.Sprintf("the FUSE mount of the volume at %s does not answer; the health monitor remounts it", volumePath)), nil
+	case status.Code(err) == codes.DeadlineExceeded && statsCtx.Err() != nil && ctx.Err() == nil:
+		// The statfs of the mount hung past the health check timeout.
+		return abnormalVolumeStats(fmt.Sprintf("the usage of the volume at %s could not be read within %v", volumePath, defaultHealthCheckTimeout)), nil
+	case err != nil:
 		return nil, err
 	}
 
@@ -464,7 +481,8 @@ func (ns *NodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVo
 	}
 
 	return &csi.NodeGetVolumeStatsResponse{
-		Usage: respUsage,
+		Usage:           respUsage,
+		VolumeCondition: &csi.VolumeCondition{Abnormal: false, Message: "volume is mounted and answers"},
 	}, nil
 }
 

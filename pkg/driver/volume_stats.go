@@ -3,11 +3,13 @@ package driver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,6 +27,26 @@ type volumeStatsCall struct {
 	done  chan struct{}
 	usage *volumeUsage
 	err   error
+}
+
+// unhealthyMountError is returned by readVolumeUsageForStats when the
+// volume path is staged or published but its FUSE mount does not answer
+// (the weed mount process died or hangs). NodeGetVolumeStats reports it as
+// an abnormal volume condition (VOLUME_CONDITION) instead of an error.
+type unhealthyMountError struct {
+	path string
+}
+
+func (e *unhealthyMountError) Error() string {
+	return fmt.Sprintf("volume path %s is not a live mount", e.path)
+}
+
+// abnormalVolumeStats is the answer of NodeGetVolumeStats for a volume whose
+// mount is not healthy: no usage, an abnormal condition with the reason.
+func abnormalVolumeStats(message string) *csi.NodeGetVolumeStatsResponse {
+	return &csi.NodeGetVolumeStatsResponse{
+		VolumeCondition: &csi.VolumeCondition{Abnormal: true, Message: message},
+	}
 }
 
 type volumeStatsRequest struct {
